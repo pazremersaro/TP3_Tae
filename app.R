@@ -47,6 +47,7 @@ library(ggridges)
 library(stringr)
 library(forcats)
 library(RColorBrewer)
+library(shinyWidgets)
 # CARGA Y MANEJO DE DATOS
 
 datos <- read_delim("cookies.txt", delim = "\t",
@@ -310,6 +311,51 @@ sidebar_g1_tabla <- bslib::sidebar(
   )
 )
 
+
+#---------------------------------------------------#
+#    Limpieza de datos para interrogante 2 (tendencia)   #  
+#---------------------------------------------------# 
+
+datos_objetivo2 <- cookies %>%
+  mutate(
+    fecha = ymd(fecha),
+    dia = weekdays(fecha),  
+    dia = str_to_title(dia),
+    dia = factor(dia, levels = c("Lunes", "Martes", "Miércoles",
+                                 "Jueves", "Viernes", "Sábado",
+                                 "Domingo")),
+    
+    mes = format(fecha, "%B"),  # devuelve el nombre del mes 
+    mes = str_to_title(mes)     # pone mayúscula inicial
+  ) %>%
+  
+  group_by(mes, dia) %>%
+  summarise(compras = sum(gasto > 0, na.rm = TRUE))
+  
+
+
+
+
+#--------------------------------------------------------#
+#    Fin limpieza de datos para interrogante 2 (tendencia)#  
+#--------------------------------------------------------#
+
+sidebar_g2_tendencia <- bslib::sidebar(
+  title = "Tendencia por Mes", 
+  shinyWidgets::pickerInput(
+    inputId = "mes_tendencia", #ID para el servidor
+    label = "Mes", 
+    choices = meses_disponibles, 
+    options = pickerOptions(),
+  )
+)
+
+
+
+
+
+
+
 # ARMAMOS LA INTERFAZ
 
 MiInterfaz <- bslib::page_navbar(
@@ -339,41 +385,26 @@ MiInterfaz <- bslib::page_navbar(
                          bslib::card_header("Tabla compradores"),
                          bslib::card_body(
                            dataTableOutput("tabla_output")
-                                          )
+                          )
                          )
                        )
                    ),
   
-  # Segunda pestaña
+ # Segunda pestaña
   bslib::nav_panel(
     title = "Pag 2",
     bslib::layout_sidebar(
-      sidebar = bslib::sidebar(
-        # shinyWidgets::airDatepickerInput()--> ver si sirve
-        title = "sidebar calendario",
-        open = TRUE,
-        shinyWidgets::airDatepickerInput(
-          inputId = "fecha_tendencia",
-          label = "Seleccionar Rango de Fechas",
-          range = TRUE,
-          # poner bien las fechas VERR
-          minDate = Sys.Date() - 365,
-          maxDate = Sys.Date(),# el maximo seria la facha de la compu
-          value = c(Sys.Date() - 90, Sys.Date()) #deberia mostrar como presetableciodo los ultimos 90 dias
-        )
-      ),
-      
-      bslib::layout_columns(
-        bslib::card(
-          full_screen = TRUE,
-          bslib::card_header("TENDENCIAS"),
-          shiny::plotOutput("tendencias_output")
-        )
+      sidebar = sidebar_g2_tendencia,
+      bslib::card(
+        full_screen = TRUE,
+        bslib::card_header("Tendencia de compra de los usuarios por mes"),
+        shiny::plotOutput("tendencias_output")
       )
     )
-    
-    
   ),
+
+
+      
   
   # Tercera pestaña
   bslib::nav_panel(
@@ -391,6 +422,8 @@ MiInterfaz <- bslib::page_navbar(
       )
   )
   ),
+  
+  
 # Cuarta pestaña
 bslib::nav_panel(
     title = "Pag 4",
@@ -421,51 +454,34 @@ bslib::nav_panel(
 
 MiServidor <- function(input, output) {
   
-#  mapa_datos <- poligonos |> 
-#   left_join(para_mapa_final,
-#             by = "pais") |> 
-#   
-#   # Nos quedamos con los n_nc que son difernentes de NA
-#   filter(!is.na(n_nc)) 
-#   
-# 
-# 
-# mapa_datosf <- mapa_datos |> 
-#   
-#   mutate(
-#     etiqueta = paste(
-#       "<b>Pais: </b>", mapa_datos$pais, "<br>",
-#       "<b>No compradores:</b>", mapa_datos$pct_nc,"% (n = ",mapa_datos$n_nc,") <br>",
-#       "<b>Navegador principal:</b>",mapa_datos$Navegador_top, "(",mapa_datos$pct_Navegador,"%) <br>",
-#       "<i>(entre sesiones) </i><br>",
-#       "<b>Dispositivo principal:</b>", mapa_datos$dispositivo_top, "(",mapa_datos$pct_dispositivo,"%) <br>",
-#       "<i>(entre sesiones)</i>"))
-# 
-# 
-# # Lo pasamos a tipo mapa
-# mapa_datosf <- sf::st_as_sf(mapa_datosf)
-# 
-# mapa <- leaflet(mapa_datosf) %>%
-#   # Ponemos el mapa que elegimos
-#   addProviderTiles("CartoDB.PositronNoLabels") %>%
-#   # Polígonos sin colores, solo bordes
-#   addPolygons(
-#     fillColor = "#7ADC87",
-#     fillOpacity = 0.3,
-#     weight = 1,
-#     color = "#6EBD4C",
-#     label = ~lapply(as.list(etiqueta), HTML),  
-#     
-#     highlightOptions = highlightOptions(
-#       weight = 2,
-#       color = "#CD5C5C",
-#       fillOpacity = 0.7,
-#       fillColor = "#FF6A6A"
-#     )
-#   )
-
-
+  #objetivo2
+  datos_filtrados <- shiny::reactive({
+    shiny::req(input$mes_tendencia)
+    
+    dplyr::filter(
+      datos_objetivo2,
+      mes == stringr::str_to_title(input$mes_tendencia)
+    )
+  })
+  
+  output$tendencias_output <- shiny::renderPlot({
+    datos <- datos_filtrados()
+    ggplot2::ggplot(datos, ggplot2::aes(x = dia, y = compras, group = 1)) +
+      ggplot2::geom_line(linewidth = 1, color = "#00C1D4") +
+      ggplot2::geom_point(size = 3, color = "#00C1D4") +
+      ggplot2::labs(
+        x = "Día de la semana",
+        y = "Número de compras",
+        title = paste("Tendencia de compras en", stringr::str_to_title(input$mes_tendencia))
+      ) +
+      ggplot2::theme_minimal() +
+      ggplot2::theme(plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"))
+  })
 }
+
+  
+
+
 
 
 shiny::shinyApp(ui = MiInterfaz, server = MiServidor)
