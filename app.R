@@ -280,9 +280,6 @@ datos_objetivo2 <- cookies %>%
   ) %>%
   group_by(mes, dia) %>%
   summarise(compras = sum(gasto > 0, na.rm = TRUE))
-#--------------------------------------------------------#
-#    Fin limpieza de datos para interrogante 2 (tendencia)#  
-#--------------------------------------------------------#
 
 
 
@@ -294,8 +291,35 @@ datos_objetivo6 <- cookies %>%
   dplyr::filter(!is.na(gasto), gasto > 0) %>% 
   dplyr::select(paginas, gasto)
 
-
-
+#---------------------------------------------------#
+#    Limpieza de datos para interrogante 7 (distribucion)   #  
+#---------------------------------------------------# 
+compras <- cookies %>%
+  dplyr::filter(!is.na(gasto), gasto > 0)
+# Estadisticas para el cartel
+dispositivo_stats <- compras %>%
+  dplyr::group_by(dispositivo) %>%
+  dplyr::summarise(
+    Media   = mean(gasto),
+    Mediana = median(gasto),
+    Min     = min(gasto),
+    Max     = max(gasto),
+    .groups = "drop"
+  ) %>%
+  #Creo una columna de texto para HTML
+  dplyr::mutate(
+    columna_text = paste0(
+      "<b>Dispositivo: </b>", dispositivo, "<br>",
+      "<b>Media: </b>",   scales::dollar(round(Media,   0)), "<br>",
+      "<b>Mediana: </b>", scales::dollar(round(Mediana, 0)), "<br>",
+      "<b>Mínimo: </b>",  scales::dollar(round(Min,     0)), "<br>",
+      "<b>Máximo: </b>",  scales::dollar(round(Max,     0))
+    )
+  ) %>%
+  # Selecciona solo la columna de texto y la variable de agrupación
+  dplyr::select(dispositivo, columna_text)
+compras_con_col_texto <- compras %>%
+  dplyr::left_join(dispositivo_stats, by = "dispositivo")
 
 
 
@@ -408,12 +432,12 @@ MiInterfaz <- bslib::page_navbar(
       bslib::card(
         full_screen = TRUE,
         bslib::card_header("Relación entre páginas visitadas y gasto por compra"),
-        plotly::plotlyOutput("dispersion_gasto")
+        plotly::plotlyOutput(outputId = "dispersion_gasto")
       ),
       bslib::card(
         full_screen = TRUE,
         bslib::card_header("Distribución de gasto por compra según dispositivo"),
-        plotly::plotlyOutput("distribucion_compra")
+        plotly::plotlyOutput(outputId = "distribucion_compra")
       )
   )
 ),
@@ -441,24 +465,18 @@ bslib::nav_panel(
 
 
 
-
-
-
-
 # ARMAMOS EL SERVIDOR
-
 MiServidor <- function(input, output) {
-  #pag 1
+  # Página 1
   
   
   
-  #pag 2
+  # Página 2
   datos_filtrados <- shiny::reactive({
     dplyr::filter(datos_objetivo2,
       mes == input$mes_tendencia
     )
   })
-  
   output$tendencias_output <- shiny::renderPlot({
     datos <- datos_filtrados()
     ggplot2::ggplot(datos, ggplot2::aes(x = dia, y = compras, group = 1)) +
@@ -472,10 +490,9 @@ MiServidor <- function(input, output) {
       ggplot2::theme_minimal() +
       ggplot2::theme(plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"))
   })
-}
 
-  #pag 3
-
+  # Página 3
+#Gráfico de dispersión
 output$dispersion_gasto <- plotly::renderPlotly({
   graf_obj6 <- ggplot2::ggplot (datos_objetivo6,
                                ggplot2::aes(
@@ -497,6 +514,27 @@ output$dispersion_gasto <- plotly::renderPlotly({
   plotly::ggplotly(graf_obj6, tooltip = "text")
 })
 
+#Gráfico de distribuciones
+output$distribucion_compra <- plotly::renderPlotly({
+  graf_dist <- ggplot2::ggplot(
+    compras_con_col_texto,
+    ggplot2::aes(x = gasto, fill = dispositivo, text = columna_text)
+  ) +
+    ggplot2::geom_density(alpha = 0.4, color = "white") +
+    ggplot2::scale_x_log10(labels = scales::label_dollar(prefix = "USD")) +
+    ggplot2::scale_fill_brewer(palette = "Set2", name = "Dispositivo") +
+    ggplot2::labs(
+      title = "",
+      subtitle = "En escala logarítmica",
+      x = "Gasto por compra (en USD)",
+      y = "Densidad"
+    ) +
+    ggplot2::theme_bw() +
+    ggplot2::theme(legend.position = "top")
+  
+  plotly::ggplotly(graf_dist, tooltip = "text")
+})
+}
 
 
 shiny::shinyApp(ui = MiInterfaz, server = MiServidor)
