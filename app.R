@@ -266,9 +266,9 @@ mapa <- leaflet(mapa_datosf) %>%
 
 
 
-#---------------------------------------------------#
+#--------------------------------------------------------#
 #    Limpieza de datos para interrogante 2 (tendencia)   #  
-#---------------------------------------------------# 
+#--------------------------------------------------------# 
 datos_objetivo2 <- cookies %>%
   mutate(
     fecha = ymd(fecha),
@@ -283,17 +283,17 @@ datos_objetivo2 <- cookies %>%
 
 
 
-#---------------------------------------------------#
+#---------------------------------------------------------#
 #    Limpieza de datos para interrogante 6 (dispersion)   #  
-#---------------------------------------------------# 
+#---------------------------------------------------------# 
 
 datos_objetivo6 <- cookies %>%
   dplyr::filter(!is.na(gasto), gasto > 0) %>% 
   dplyr::select(paginas, gasto)
 
-#---------------------------------------------------#
+#-----------------------------------------------------------#
 #    Limpieza de datos para interrogante 7 (distribucion)   #  
-#---------------------------------------------------# 
+#-----------------------------------------------------------# 
 compras <- cookies %>%
   dplyr::filter(!is.na(gasto), gasto > 0)
 # Estadisticas para el cartel
@@ -320,6 +320,115 @@ dispositivo_stats <- compras %>%
   dplyr::select(dispositivo, columna_text)
 compras_con_col_texto <- compras %>%
   dplyr::left_join(dispositivo_stats, by = "dispositivo")
+
+
+
+#-------------------------------------------------------#
+#    Limpieza de datos para interrogante 3 (burbujas)   #  
+#-------------------------------------------------------# 
+
+# Armamos un dataset que tenga los tiempos en minutos según navegador y dispositivo
+datos_objetivo3 <- cookies %>% 
+  dplyr::mutate(
+    # Pasamos los que tienen tiempo na a 0 y todo a minutos
+    tiempo = ifelse (is.na(tiempo), 0, tiempo) / 60
+  ) %>% 
+  # Agrupamos por Navegador y dispositivo:
+  dplyr::group_by(Navegador, dispositivo) %>% 
+  dplyr::summarise(
+    tiempo_medio = mean(tiempo),
+    clicks_medio = mean(clicks),
+    
+    # Para el tamaño de los círculos
+    frecuencia = n(), # SESIONES
+    .groups = "drop"
+  ) 
+
+
+# Colores según los nvegadores
+colores_Navegador <- c( 
+  "Android" = "grey27",
+  "Chrome" = "#FFA700",
+  "Edge" = "#61C250",
+  "Firefox" = "#E66000",
+  "Internet Explorer" = "#00D4F9",
+  "Opera" = "#FF0000",
+  "Safari" = "#006CFF",
+  "Otros" = "purple2"
+)
+
+#---------------------------------------------------------#
+#    Limpieza de datos para interrogante 4 (histograma)   #  
+#---------------------------------------------------------# 
+visitas_compra <- cookies %>%
+  dplyr::arrange(ID, ymd(fecha)) %>% 
+  dplyr::group_by(ID) %>% 
+  dplyr::mutate(compra =  gasto > 0, 
+         visita_compra = ifelse(any(compra),          
+                                which(compra)[1], NA)) %>% 
+  dplyr::filter(!is.na(visita_compra)) %>%
+  dplyr::add_count(ID, dispositivo, name = "veces_dispositivo") %>%
+  dplyr::summarise(                  
+    visitas_hasta_compra = dplyr::first(visita_compra),
+    
+    dispositivo_principal = dispositivo[which.max(veces_dispositivo)]
+  ) %>% 
+  dplyr::mutate(
+    categoria_visitas = cut(
+      visitas_hasta_compra,
+      breaks = c(0, 1, 4, 9, Inf),
+      labels = c("1", "2–4", "5–9", "10 o más")
+    )
+  )
+
+# Totales por categoría de visita (cuantos clientes hay en cada categoria)
+totales_categoria <- visitas_compra %>%
+  dplyr::group_by(categoria_visitas) %>%
+  dplyr::summarise(total = n(),
+            .groups = 'drop') 
+
+# Porcentajes por dispositivo dentro de cada categoría
+porcentajes_dispositivo <- visitas_compra %>%          
+  # Agrupamos por categoria de visitas y dispositivo
+  dplyr::group_by(categoria_visitas, dispositivo_principal) %>%
+  # Contamos cuantos clientes hay en cada combinacion
+  dplyr::summarise(n = n(), 
+            .groups = 'drop') %>%        
+  # Agrupamos solo por categoria de visita
+  dplyr::group_by(categoria_visitas) %>%         
+  
+  dplyr::mutate(porcentaje = round(n / sum(n) * 100, 1)) %>%  
+  # Porcentaje de cada dispositivo dentro de su categoria
+  dplyr::select(categoria_visitas,
+         dispositivo_principal, 
+         porcentaje) 
+# Formato ancho para tener una columna por dispositivo
+porcentajes_ancho <- porcentajes_dispositivo %>%
+  tidyr::pivot_wider(
+    names_from = dispositivo_principal,
+    values_from = porcentaje,
+    values_fill = 0
+  )
+
+# Unimos los totales con los porcentajes
+datos_grafico <- totales_categoria %>%
+  dplyr::left_join(porcentajes_ancho,
+            by = "categoria_visitas")
+
+# Hacemos el tooltip para que aparezca la etiqueta que cuando apoyas el mouse
+datos_grafico <- datos_grafico %>%
+  dplyr::mutate(
+    tooltip = paste0(
+      "<b>Visitas hasta compra: ", categoria_visitas, "</b><br>",
+      "Total clientes: ", total, "<br><br>",
+      "<b>Por dispositivo:</b><br>",
+      "️ Computadora: ", ifelse(is.na(Computadora), 0, Computadora), "%<br>",
+      " Teléfono: ", ifelse(is.na(Celular), 0, Celular), "%<br>",
+      " Tablet: ", ifelse(is.na(Tablet), 0, Tablet), "%"
+    )
+  )
+
+
 
 
 
@@ -373,17 +482,48 @@ sidebar_g2_tendencia <- bslib::sidebar(
     options = pickerOptions(),
   )
 )
+###############################################################
 
 
 # ARMAMOS LA INTERFAZ
 
 MiInterfaz <- bslib::page_navbar(
   title = "Google Analytics",
-  
+  bslib::nav_panel(
+    title = "Introducción",
+    bslib::layout_column_wrap(
+      width = 1/2,
+      height = 300,
+      heights_equal = "row",
+      bslib::card(
+        full_screen = TRUE,
+        bslib::card_header("Introdución:"),
+        bslib::card_body(
+          style = "height: 250px; overflow: auto; padding-right: 6px;",
+          tags$p("La tienda oficial del merch de Google está interesada en obtener información que pueda ayudarle a mejorar su estrategia
+           comercial. Para ello se cuenta con la base de datos proporcionada
+           por Google Analytics, que contiene datos del primer semestre del
+           año 2017."),
+          tags$p("Para analizar el comportamiento de los visitantes de esta 
+           página web, surgieron varios interrogantes de interés que serán 
+           respondidos mediante un análisis exploratorio.")
+        )
+      ),
+      bslib::card(
+        full_screen = FALSE,
+        bslib::card_header("ver que poner como titulo"),
+        bslib::card_body(
+          style = "height: 250px; overflow: auto; padding-right: 6px;",
+          tags$p(tags$b("Cátedra:"), " Análsis Exploratorio de Datos"),
+          tags$p(tags$b("Fecha:"), " Noviembre 2025"),
+          tags$p(tags$b("Autores:"), " Karen Ottersdtedt, María Paz Remersaro, Agustina Roura")
+        )
+      )
+    )
+    ),
   # Primera pestaña
-  bslib::nav_panel("Grupo 1",
-                   
-                   # Primera sección:
+  bslib::nav_panel(
+                   title ="Características",
                    bslib::layout_sidebar(
                    sidebar = sidebar_g1_mapa,
                      bslib::card(
@@ -411,7 +551,7 @@ MiInterfaz <- bslib::page_navbar(
   
  # Segunda pestaña
   bslib::nav_panel(
-    title = "Pag 2",
+    title = "Evolución de compras",
     bslib::layout_sidebar(
       sidebar = sidebar_g2_tendencia,
       bslib::card(
@@ -422,12 +562,9 @@ MiInterfaz <- bslib::page_navbar(
     )
   ),
 
-
-      
-  
   # Tercera pestaña
   bslib::nav_panel(
-    title = "Pag 3",
+    title = "Análisis del gasto",
     bslib::layout_columns(
       bslib::card(
         full_screen = TRUE,
@@ -442,25 +579,24 @@ MiInterfaz <- bslib::page_navbar(
   )
 ),
   
-  
 # Cuarta pestaña
 bslib::nav_panel(
-    title = "Pag 4",
+    title = "Comportamiento del usuario",
     bslib::layout_columns(
       bslib::card(
         full_screen = TRUE,
-        bslib::card_header("Cantidad de clientes según visitas hasta la primera compra"),
-        plotly::plotlyOutput("hist_ventas")
+        bslib::card_header("Cantidad de clientes según la cantidad de visitas hasta la primera compra"),
+        plotly::plotlyOutput(outputId = "hist_ventas")
       ),
       bslib::card(
         full_screen = TRUE,
-        bslib::card_header("Tiempo de visita por Navegador y Dispositivo"),
-        plotly::plotlyOutput("graf_burbujas")
+        bslib::card_header("Tiempo de visita por navegador y dispositivo"),
+        plotly::plotlyOutput(outputId = "graf_burbujas")
       )
     )
   )
+) 
   
-)  
 
 
 
@@ -480,8 +616,8 @@ MiServidor <- function(input, output) {
   output$tendencias_output <- shiny::renderPlot({
     datos <- datos_filtrados()
     ggplot2::ggplot(datos, ggplot2::aes(x = dia, y = compras, group = 1)) +
-      ggplot2::geom_line(linewidth = 1, color = "#00C1D4") +
-      ggplot2::geom_point(size = 3, color = "#00C1D4") +
+      ggplot2::geom_line(linewidth = 1, color = "#40E0D0") +
+      ggplot2::geom_point(size = 3, color = "#40E0D0") +
       ggplot2::labs(
         x = "Día de la semana",
         y = "Número de compras",
@@ -493,26 +629,33 @@ MiServidor <- function(input, output) {
 
   # Página 3
 #Gráfico de dispersión
-output$dispersion_gasto <- plotly::renderPlotly({
-  graf_obj6 <- ggplot2::ggplot (datos_objetivo6,
-                               ggplot2::aes(
-                               x = paginas,
-                               y = gasto,
-                              text = paste0(
-                      "Páginas: ", paginas,
-                     "<br>Gasto: ", scales::dollar(gasto)
-      ))) +
-    ggplot2::geom_point(alpha = 0.6, color = "lightblue") +
-    ggplot2::scale_y_log10(labels = scales::dollar) +
-    ggplot2::labs(
-      x = "Relación entre páginas visitadas y gasto por compra",
-      y = "Gasto por compra USD (escala logarítmica)"
-    ) +
-    ggplot2::theme_bw() +
-    ggplot2::theme(legend.position = "right")
+  output$dispersion_gasto <- plotly::renderPlotly({
+    graf_obj6 <- ggplot2::ggplot(datos_objetivo6,
+                                 ggplot2::aes(
+                                   x = gasto,
+                                   y = paginas,
+                                   text = paste0(
+                                     "Gasto: ",gasto,
+                                     "<br>Páginas: ", paginas
+                                   )
+                                 )) +
+      ggplot2::geom_point(alpha = 0.6, color = "#40E0D0") +
+      ggplot2::scale_x_log10(
+        breaks = c(10, 100, 1000, 10000),
+        labels = scales::label_number()
+      ) +
+      ggplot2::labs(
+        x = "Gasto por compra en USD (escala logarítmica)",
+        y = "Cantidad de páginas visitadas"
+      ) +
+      ggplot2::theme_bw() +
+      ggplot2::theme(legend.position = "right")
+    
+    plotly::ggplotly(graf_obj6, tooltip = "text")
+  })
   
-  plotly::ggplotly(graf_obj6, tooltip = "text")
-})
+
+
 
 #Gráfico de distribuciones
 output$distribucion_compra <- plotly::renderPlotly({
@@ -521,12 +664,15 @@ output$distribucion_compra <- plotly::renderPlotly({
     ggplot2::aes(x = gasto, fill = dispositivo, text = columna_text)
   ) +
     ggplot2::geom_density(alpha = 0.4, color = "white") +
-    ggplot2::scale_x_log10(labels = scales::label_dollar(prefix = "USD")) +
+    ggplot2::scale_x_log10(
+      breaks = c(10, 100, 1000, 10000),
+      labels = scales::label_number()
+    ) +
     ggplot2::scale_fill_brewer(palette = "Set2", name = "Dispositivo") +
     ggplot2::labs(
       title = "",
       subtitle = "En escala logarítmica",
-      x = "Gasto por compra (en USD)",
+      x = "Gasto por compra en USD (escala logarítmica)",
       y = "Densidad"
     ) +
     ggplot2::theme_bw() +
@@ -534,6 +680,65 @@ output$distribucion_compra <- plotly::renderPlotly({
   
   plotly::ggplotly(graf_dist, tooltip = "text")
 })
+
+# Página 4
+#Burbujas
+output$graf_burbujas <- plotly::renderPlotly({
+  grafico_obj3 <- ggplot2::ggplot(datos_objetivo3) +
+    ggplot2::aes(
+      x = tiempo_medio,
+      y = clicks_medio,
+      size = frecuencia,
+      colour = Navegador,
+      text = paste0(
+        "<b>Navegador: </b>", Navegador, "<br>",
+        "<b>Frecuencia: </b>", frecuencia, " <i>(sesiones)</i><br>",
+        "<b>Tiempo medio: </b>", round(tiempo_medio, 2), " min<br>",
+        "<b>Clicks medio: </b>", round(clicks_medio, 0)
+      )
+    ) + 
+    ggplot2::geom_point(alpha = 0.4) +
+    ggplot2::scale_colour_manual(values = colores_Navegador, name = "Navegador") +
+    ggplot2::scale_size(range = c(2, 18), name = "Conteo de sesiones") +
+    ggplot2::scale_x_continuous(limits = c(0, max(datos_objetivo3$tiempo_medio) * 1.5)) +
+    ggplot2::scale_y_continuous(limits = c(0, max(datos_objetivo3$clicks_medio) * 1.5)) +
+    ggplot2::facet_wrap(~dispositivo, ncol = 3) +
+    ggplot2::labs(
+      x = "Tiempo (minutos)",
+      y = "Clicks"
+    ) +
+    ggplot2::theme_bw() +
+    ggplot2::theme(
+      strip.background = ggplot2::element_blank(),
+      strip.text = ggplot2::element_text(face = "bold")
+    )
+  
+  plotly::ggplotly(grafico_obj3, tooltip = "text") %>%
+    plotly::layout(legend = list(itemsizing = "constant"))
+})
+
+
+#Histograma
+output$hist_ventas <- plotly::renderPlotly({
+  p <- ggplot2::ggplot(
+    datos_grafico,
+    ggplot2::aes(x = categoria_visitas, y = total, text = tooltip)
+  ) +
+    ggplot2::geom_col(fill = "#40E0D0") +
+    ggplot2::labs(
+      x = "Visitas hasta la compra",
+      y = "Cantidad de clientes"
+    ) +
+    ggplot2::theme_minimal() +
+    ggplot2::theme(
+      strip.text = ggplot2::element_text(face = "bold")
+    )
+  
+  plotly::ggplotly(p, tooltip = "text")
+})
+
+
+
 }
 
 
