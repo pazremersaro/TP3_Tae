@@ -227,20 +227,13 @@ para_mapa_final <- para_mapa |>
 #--------------------------------------------------------#
 #    Fin limpieza de datos para interrogante 1 (mapa)    #  
 #--------------------------------------------------------#
-
-
-
 mapa_datos <- poligonos %>% 
   left_join(para_mapa_final,
             by = "pais") %>% 
   
   # Nos quedamos con los n_nc que son difernentes de NA
   filter(!is.na(n_nc)) 
-
-
-
 mapa_datosf <- mapa_datos %>% 
-  
   mutate(
     etiqueta = paste(
       "<b>Pais: </b>", mapa_datos$pais, "<br>",
@@ -249,11 +242,8 @@ mapa_datosf <- mapa_datos %>%
       "<i>(entre sesiones) </i><br>",
       "<b>Dispositivo principal:</b>", mapa_datos$dispositivo_top, "(",mapa_datos$pct_dispositivo,"%) <br>",
       "<i>(entre sesiones)</i>"))
-
-
 # Lo pasamos a tipo mapa
 mapa_datosf <- sf::st_as_sf(mapa_datosf)
-
 mapa <- leaflet(mapa_datosf) %>%
   # Ponemos el mapa que elegimos
   addProviderTiles("CartoDB.PositronNoLabels") %>%
@@ -272,6 +262,45 @@ mapa <- leaflet(mapa_datosf) %>%
       fillColor = "#FF6A6A"
     )
   )
+
+
+
+
+#---------------------------------------------------#
+#    Limpieza de datos para interrogante 2 (tendencia)   #  
+#---------------------------------------------------# 
+datos_objetivo2 <- cookies %>%
+  mutate(
+    fecha = ymd(fecha),
+    dia = factor(str_to_title(weekdays(fecha)),
+                 levels = c("Lunes", "Martes", "Miércoles", "Jueves",
+                            "Viernes", "Sábado", "Domingo")),
+    mes = factor(str_to_title(format(fecha, "%B")),
+                 levels = c("Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio"))
+  ) %>%
+  group_by(mes, dia) %>%
+  summarise(compras = sum(gasto > 0, na.rm = TRUE))
+#--------------------------------------------------------#
+#    Fin limpieza de datos para interrogante 2 (tendencia)#  
+#--------------------------------------------------------#
+
+
+
+#---------------------------------------------------#
+#    Limpieza de datos para interrogante 6 (dispersion)   #  
+#---------------------------------------------------# 
+
+datos_objetivo6 <- cookies %>%
+  dplyr::filter(!is.na(gasto), gasto > 0) %>% 
+  dplyr::select(paginas, gasto)
+
+
+
+
+
+
+
+
 
 
 
@@ -311,49 +340,15 @@ sidebar_g1_tabla <- bslib::sidebar(
   )
 )
 
-
-#---------------------------------------------------#
-#    Limpieza de datos para interrogante 2 (tendencia)   #  
-#---------------------------------------------------# 
-
-datos_objetivo2 <- cookies %>%
-  mutate(
-    fecha = ymd(fecha),
-    dia = weekdays(fecha),  
-    dia = str_to_title(dia),
-    dia = factor(dia, levels = c("Lunes", "Martes", "Miércoles",
-                                 "Jueves", "Viernes", "Sábado",
-                                 "Domingo")),
-    
-    mes = format(fecha, "%B"),  # devuelve el nombre del mes 
-    mes = str_to_title(mes)     # pone mayúscula inicial
-  ) %>%
-  
-  group_by(mes, dia) %>%
-  summarise(compras = sum(gasto > 0, na.rm = TRUE))
-  
-
-
-
-
-#--------------------------------------------------------#
-#    Fin limpieza de datos para interrogante 2 (tendencia)#  
-#--------------------------------------------------------#
-
 sidebar_g2_tendencia <- bslib::sidebar(
   title = "Tendencia por Mes", 
   shinyWidgets::pickerInput(
     inputId = "mes_tendencia", #ID para el servidor
     label = "Mes", 
-    choices = meses_disponibles, 
+    choices =  unique(datos_objetivo2$mes), 
     options = pickerOptions(),
   )
 )
-
-
-
-
-
 
 
 # ARMAMOS LA INTERFAZ
@@ -397,7 +392,7 @@ MiInterfaz <- bslib::page_navbar(
       sidebar = sidebar_g2_tendencia,
       bslib::card(
         full_screen = TRUE,
-        bslib::card_header("Tendencia de compra de los usuarios por mes"),
+        bslib::card_header("Evolución de la cantidad de compras por día de la semana (según mes)"),
         shiny::plotOutput("tendencias_output")
       )
     )
@@ -412,16 +407,16 @@ MiInterfaz <- bslib::page_navbar(
     bslib::layout_columns(
       bslib::card(
         full_screen = TRUE,
-        bslib::card_header("DISPERSION GASTO"),
-        shiny::plotOutput("dispersion_gasto")
+        bslib::card_header("Relación entre páginas visitadas y gasto por compra"),
+        plotly::plotlyOutput("dispersion_gasto")
       ),
       bslib::card(
         full_screen = TRUE,
-        bslib::card_header("DISTRIBUCIÓN COMPRA"),
-        shiny::plotOutput("distribucion_compra")
+        bslib::card_header("Distribución de gasto por compra según dispositivo"),
+        plotly::plotlyOutput("distribucion_compra")
       )
   )
-  ),
+),
   
   
 # Cuarta pestaña
@@ -430,13 +425,13 @@ bslib::nav_panel(
     bslib::layout_columns(
       bslib::card(
         full_screen = TRUE,
-        bslib::card_header("HISTOGRAMA VENTAS"),
-        shiny::plotOutput("hist_ventas")
+        bslib::card_header("Cantidad de clientes según visitas hasta la primera compra"),
+        plotly::plotlyOutput("hist_ventas")
       ),
       bslib::card(
         full_screen = TRUE,
-        bslib::card_header("GRAF BUBUJAS"),
-        shiny::plotOutput("graf_burbujas")
+        bslib::card_header("Tiempo de visita por Navegador y Dispositivo"),
+        plotly::plotlyOutput("graf_burbujas")
       )
     )
   )
@@ -453,14 +448,14 @@ bslib::nav_panel(
 # ARMAMOS EL SERVIDOR
 
 MiServidor <- function(input, output) {
+  #pag 1
   
-  #objetivo2
+  
+  
+  #pag 2
   datos_filtrados <- shiny::reactive({
-    shiny::req(input$mes_tendencia)
-    
-    dplyr::filter(
-      datos_objetivo2,
-      mes == stringr::str_to_title(input$mes_tendencia)
+    dplyr::filter(datos_objetivo2,
+      mes == input$mes_tendencia
     )
   })
   
@@ -472,15 +467,35 @@ MiServidor <- function(input, output) {
       ggplot2::labs(
         x = "Día de la semana",
         y = "Número de compras",
-        title = paste("Tendencia de compras en", stringr::str_to_title(input$mes_tendencia))
+        title = paste(stringr::str_to_title(input$mes_tendencia))
       ) +
       ggplot2::theme_minimal() +
       ggplot2::theme(plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"))
   })
 }
 
-  
+  #pag 3
 
+output$dispersion_gasto <- plotly::renderPlotly({
+  graf_obj6 <- ggplot2::ggplot (datos_objetivo6,
+                               ggplot2::aes(
+                               x = paginas,
+                               y = gasto,
+                              text = paste0(
+                      "Páginas: ", paginas,
+                     "<br>Gasto: ", scales::dollar(gasto)
+      ))) +
+    ggplot2::geom_point(alpha = 0.6, color = "lightblue") +
+    ggplot2::scale_y_log10(labels = scales::dollar) +
+    ggplot2::labs(
+      x = "Relación entre páginas visitadas y gasto por compra",
+      y = "Gasto por compra USD (escala logarítmica)"
+    ) +
+    ggplot2::theme_bw() +
+    ggplot2::theme(legend.position = "right")
+  
+  plotly::ggplotly(graf_obj6, tooltip = "text")
+})
 
 
 
