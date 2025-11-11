@@ -476,19 +476,22 @@ sidebar_g1_tabla <- bslib::sidebar(
 sidebar_g2_tendencia <- bslib::sidebar(
   title = "Tendencia por Mes", 
   shinyWidgets::pickerInput(
-    inputId = "mes_tendencia", #ID para el servidor
+    inputId = "mes_tendencia", 
     label = "Mes", 
-    choices =  unique(datos_objetivo2$mes), 
-    options = pickerOptions(),
+    choices = unique(datos_objetivo2$mes),
+    multiple = TRUE,
+    selected = unique(datos_objetivo2$mes)[1],
   )
-)
+ )
+  
+
 ###############################################################
 
 
 # ARMAMOS LA INTERFAZ
 
-MiInterfaz <- bslib::page_navbar(
-  title = "Google Analytics",
+  MiInterfaz <- bslib::page_navbar(
+    title = tags$span("Google Analytics", style = "color: #40E0D0; font-weight: bold;"),
   bslib::nav_panel(
     title = "Introducción",
     bslib::layout_column_wrap(
@@ -497,30 +500,47 @@ MiInterfaz <- bslib::page_navbar(
       heights_equal = "row",
       bslib::card(
         full_screen = TRUE,
-        bslib::card_header("Introdución:"),
+        bslib::card_header(tags$b("Seguimiento del comportamiento de los usuarios en un sitio web")),
         bslib::card_body(
           style = "height: 250px; overflow: auto; padding-right: 6px;",
+      
           tags$p("La tienda oficial del merch de Google está interesada en obtener información que pueda ayudarle a mejorar su estrategia
-           comercial. Para ello se cuenta con la base de datos proporcionada
+           comercial."),
+          tags$p("Para ello se cuenta con la base de datos proporcionada
            por Google Analytics, que contiene datos del primer semestre del
            año 2017."),
-          tags$p("Para analizar el comportamiento de los visitantes de esta 
-           página web, surgieron varios interrogantes de interés que serán 
-           respondidos mediante un análisis exploratorio.")
+          tags$p("Mediante un análisis exploratorio se estudia el comportamiento de los visitantes de esta página web.")
         )
       ),
       bslib::card(
         full_screen = FALSE,
-        bslib::card_header("ver que poner como titulo"),
+        bslib::card_header(tags$b("Variables de la base de datos")), # Título de la Card
         bslib::card_body(
           style = "height: 250px; overflow: auto; padding-right: 6px;",
-          tags$p(tags$b("Cátedra:"), " Análsis Exploratorio de Datos"),
-          tags$p(tags$b("Fecha:"), " Noviembre 2025"),
-          tags$p(tags$b("Autores:"), " Karen Ottersdtedt, María Paz Remersaro, Agustina Roura")
+          
+          tags$ul(
+            tags$p(shiny::icon("tag"), tags$b("ID:"), " Número que identifica a cada visitante del sitio web."),
+            
+            tags$p(shiny::icon("calendar-alt"), tags$b("Fecha:"), "Fecha de la visita al sitio web."),
+            
+            tags$p(shiny::icon("mouse-pointer"), tags$b("Clicks:"), "Cantidad de clicks realizados durante la visita al sitio web."),
+            
+            tags$p(shiny::icon("file"), tags$b("Paginas:"), "Cantidad de páginas accedidas durante la visita al sitio web."),
+            
+            tags$p(shiny::icon("clock"), tags$b("Tiempo:"), "Duración de la visita al sitio web, en segundos."),
+            
+            tags$p(shiny::icon("dollar-sign"), tags$b("Gasto:"), "Valor monetario de las compras realizadas durante la visita al sitio web, en dólares."),
+            
+            tags$p(shiny::icon("globe"), tags$b("Browser:"), "Tipo de navegador desde el que accedi´o al sitio web."),
+            
+            tags$p(shiny::icon("mobile-alt"), tags$b("Dispositivo:"), "Tipo de dispositivo desde el que accedió al sitio web."),
+            
+            tags$p(shiny::icon("flag"), tags$b("Pais:"), "País de residencia del visitante del sitio web.")
+          )
+          # [FIN DEL NUEVO CONTENIDO CON ICONOS]
         )
       )
-    )
-    ),
+    )),
   # Primera pestaña
   bslib::nav_panel(
                    title ="Características",
@@ -609,23 +629,37 @@ MiServidor <- function(input, output) {
   
   # Página 2
   datos_filtrados <- shiny::reactive({
-    dplyr::filter(datos_objetivo2,
-      mes == input$mes_tendencia
-    )
+    dplyr::filter(datos_objetivo2, 
+                  mes %in% input$mes_tendencia)
   })
   output$tendencias_output <- shiny::renderPlot({
     datos <- datos_filtrados()
-    ggplot2::ggplot(datos, ggplot2::aes(x = dia, y = compras, group = 1)) +
-      ggplot2::geom_line(linewidth = 1, color = "#40E0D0") +
-      ggplot2::geom_point(size = 3, color = "#40E0D0") +
+    
+    ggplot2::ggplot(datos, ggplot2::aes(x = dia, y = compras, color = mes, group = mes)) +
+      ggplot2::geom_line(linewidth = 1) +
+      ggplot2::geom_point(size = 3) +
+      ggplot2::scale_color_manual(
+        values = c(
+          "Enero" = "#1abc9c",   
+          "Febrero" = "#3498db",  
+          "Marzo" = "#9b59b6",   
+          "Abril" = "#e67e22",    
+          "Mayo" = "#2ecc71",    
+          "Junio" = "#e74c3c"     
+        )
+      ) +
       ggplot2::labs(
         x = "Día de la semana",
         y = "Número de compras",
-        title = paste(stringr::str_to_title(input$mes_tendencia))
+        color = "Mes",
       ) +
       ggplot2::theme_minimal() +
-      ggplot2::theme(plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"))
+      ggplot2::theme(
+        plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"),
+        legend.position = "bottom"
+      )
   })
+  
 
   # Página 3
 #Gráfico de dispersión
