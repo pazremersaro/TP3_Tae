@@ -10,15 +10,12 @@ library(dplyr)
 library(tidyr)
 
 # MAPAS
-# Como son muchos los países intento usar un mapa:
 # install.packages("sf")
-
-library(sf) # No me anduvo, VER
+library(sf) 
 library(leaflet)
 library(spData)
 # install.packages("rnaturalearth")
-library(rnaturalearth) # (usamos ne_countries)
-
+library(rnaturalearth) 
 library(rnaturalearthdata)
 library(countrycode)
 library(htmltools)
@@ -26,21 +23,16 @@ library(htmltools)
 # PARA OBJETIVO 2
 library(lubridate)
 
-
 # PARA OBJETIVO 3 (GRÁFICOS INTERACTIVOS)
 library(plotly)
-
 
 # PARA OBJETIVO 4
 library(ggplot2)
 
-
-
 # OBJETIVO 5
 library(scales)
-library(kableExtra)
-
-
+# library(kableExtra)
+library(DT)
 
 # OBJETIVO 7
 library(ggridges)
@@ -48,15 +40,19 @@ library(stringr)
 library(forcats)
 library(RColorBrewer)
 library(shinyWidgets)
-# CARGA Y MANEJO DE DATOS
 
+
+# CARGA Y MANEJO DE DATOS
 datos <- read_delim("cookies.txt", delim = "\t",
                     escape_double = FALSE, trim_ws = TRUE)
-# Ponemos los países en español:
 
-# VER DE CAMBIAR EL ORDEN POR EL WARNING
-cookies <- datos |> 
+cookies <- datos |>
   mutate(
+    
+    # Para poder hacer los continentes
+    pais_original = pais,
+    
+    # Pasando los países a español
     pais = case_when(
       pais == "(not set)" ~ "Sin especificar",
       T ~ countrycode(
@@ -64,15 +60,44 @@ cookies <- datos |>
         origin = "country.name.en",
         destination = "cldr.name.es")),
     
-    iso_a3 = countrycode(pais,
-                         "country.name", "iso3c"),
+    # Continentes para el mapa
+    # Continentes en inglés porque es lo que tiene r
+    continente_ingles = countrycode(
+      sourcevar = pais_original,
+      origin = "country.name.en",
+      destination = "un.region.name"
+    ),
     
-    Navegador = browser,
+    # Pasando las cosas a español:
+    # Paises
+    iso_a3 = countrycode(
+      sourcevar = pais,
+      origin = "country.name",
+      destination = "iso3c"
+    ),
+    # Dispositivos
     dispositivo = case_when(
       dispositivo == "desktop" ~ "Computadora",
       dispositivo == "mobile" ~ "Celular",
       dispositivo == "tablet" ~ "Tablet"
-    ))
+    ),
+    # Continentes
+    continente = case_when(
+      continente_ingles == "Americas" ~ "América",
+      continente_ingles == "Europe" ~ "Europa",
+      continente_ingles == "Africa" ~ "África",
+      continente_ingles == "Oceania" ~ "Oceanía",
+      continente_ingles == "Asia" ~ "Asia",
+      # Kosovo y Taiwan tiraban warnings así que los cambiamos
+      # a mano
+      pais == "Kosovo" ~ "Europa",
+      pais == "Taiwán" ~ "Asia",
+      T ~ "Sin especificar"
+    )
+  ) |> 
+  # Eliminamos estos países y continentes que están en inglés
+  select(-pais_original, -continente_ingles) |> 
+  rename(Navegador = browser)
 
 
 #---------------------------------------------------#
@@ -84,57 +109,53 @@ nc_mapa <- cookies |>
             paises_dif = n_distinct(pais),
             not_set = any(pais == "Sin especificar"),
             # De todas formas debería ser el mismo, pero consideramos
-            # el primero para que no se repita
+            # el primero para que no se repita 
             pais = first(pais),
+            
+            # Agregamos iso_a3 para que lo tenga en cuenta más adelante y 
+            # se pueda graficar bien
+            iso_a3 = first(iso_a3),
+            continente = first(continente),
             sesiones = n(),
             .groups = "drop") |> 
-  filter((compro == F) & (paises_dif == 1 & not_set == F))
-  
-  
+  filter((compro == F) & (paises_dif == 1 & not_set == F)) 
 
 
-# 
-# nc_mapa <- no_compradores%>%
-#   group_by(ID) %>%
-#   summarise(
-#     # De todas formas debería ser el mismo, pero consideramos
-#     # el primero para que no se repita
-#     pais = first(pais),
-#     sesiones = n(),
-#     .groups = "drop"
-#   )
-
-
-# Armamos un dataset que cuente cuántos usuarios no compradores hay por país (entre los que tienen país especificado y es sólo uno)
+# Total de usuarios de cada país (incluye compradores Y no compradores)
 total_pais <- cookies |> 
-  # Sacamos los usuarios que no tienen país registrado
-  filter(pais != "Sin especificar") |> 
-  # Eliminamos anguilla también porque no se tiene en cuenta adelante
-  filter(pais != "Anguila") |> 
-  # Agrupamos por país
-  group_by(pais) |> 
+  filter(pais != "Sin especificar", pais != "Anguila") |> 
+  group_by(ID) |> 
   summarise(
-    # Calculamos la cantidad de usuarios diferentes por país
-    usuarios_totales = n_distinct(ID),
+    paises_dif = n_distinct(pais),
+    pais = first(pais),
     .groups = "drop"
-  )
+  ) |> 
+  filter(paises_dif == 1) |>  
+  group_by(pais) |> 
+  summarise(usuarios_totales = n(), .groups = "drop")
 
-# Para las sesiones (NAVEGADOR Y DISPOSITIVO):
+
+
+# Para las sesiones:
 # NAVEGADOR
 Navegador_pais <- cookies |> 
-  # Agrupamos por dispositivo y país
+  # Agrupamos por navegador y país
   group_by(pais, Navegador) |> 
   # Contamos cuantas sesiones por país por dispositivo hay
-  summarise(cantidad = n(),
-            .groups = "drop") |> 
+  summarise(
+    cantidad = n(),
+    # Contamos cuántos países diferentes hay
+    paises_dif = n_distinct(pais),
+    .groups = "drop") |> 
+  filter(paises_dif == 1) |> 
   # Nos quedamos con los países agrupados
   group_by(pais) |> 
   # Cantidad de sesiones por dispositivo por país 
-  mutate(pct = round(cantidad / sum(cantidad) * 100, 0)) |> 
-  
+  mutate(
+    pct = round(cantidad / sum(cantidad) * 100, 1)
+  ) |> 
   # Acomodamos de dispositivo con mayor uso por país a menor cantidad de uso
   arrange(pais, desc(cantidad)) |> 
-  
   # Nos queremos quedar sólo con la primera 
   # (osea que nos quedamos con el navegador principal de cada país)
   slice(1) |> 
@@ -148,15 +169,19 @@ dispositivo_pais <- cookies |>
   # Agrupamos por dispositivo y país
   group_by(pais, dispositivo) |> 
   # Contamos cuantas sesiones por país por dispositivo hay
-  summarise(cantidad = n(),
-            .groups = "drop") |> 
+  summarise(
+    cantidad = n(),
+    paises_dif = n_distinct(pais),
+    .groups = "drop"
+  ) |> 
+  filter(paises_dif == 1) |> 
   group_by(pais) |> 
   # Cantidad de sesiones por dispositivo por país 
-  mutate(pct = round(cantidad / sum(cantidad) * 100, 0)) |> 
-  
+  mutate(
+    pct = round(cantidad / sum(cantidad) * 100, 1)
+  ) |> 
   # Acomodamos de dispositivo con mayor uso por país a menor cantidad de uso
   arrange(pais, desc(cantidad)) |> 
-  
   # Nos queremos quedar sólo con la primera
   slice(1) |> 
   select(pais,
@@ -164,30 +189,23 @@ dispositivo_pais <- cookies |>
          pct_dispositivo = pct)
 
 
-
-# INTERESA QUE APAREZCA:
-# - % NO COMPRADORES (POR PAÍS)
-# - CANTIDAD DE NO COMPRADORES (POR PAIS)
-# - % Navegador (MAYOR CANTIDAD DE SESIONES POR PAÍS)
-# - % DISPOSITIVO (MAYOR CANTIDAD DE SESIONES POR PAIS)
-
-
 # UNIMOS LOS DATASETS
 para_mapa <- nc_mapa |> 
   group_by(pais) |> 
-  summarise(n_nc = n(),
-            .groups = "drop") |> 
+  summarise(
+    n_nc = n(),
+    # Agregamos esto para que funcione bien el mapa
+    iso_a3 = first(iso_a3),
+    continente = first(continente),
+    .groups = "drop"
+  ) |> 
   left_join(total_pais, by = "pais") |> 
-  mutate(pct_nc = round(n_nc / usuarios_totales * 100)) |> 
-  left_join(Navegador_pais, by = "pais") |> 
+  mutate(pct_nc = round(n_nc / usuarios_totales * 100, 2)) |> 
+  left_join(Navegador_pais, by = "pais")|> 
   left_join(dispositivo_pais, by = "pais") 
 
 
 
-# MAPA
-
-# Para que aparezca la información a lo largo de
-# todo el país, hay que usar los polígonos de países:
 poligonos <- ne_countries(scale = "medium", # Supuestamente para que tenga un nivel de detalle intermedio
                           # Decimos que devuelva un tipo de archivo sf
                           # (que es lo que se usa para los mapas)
@@ -195,27 +213,21 @@ poligonos <- ne_countries(scale = "medium", # Supuestamente para que tenga un ni
   mutate(
     pais = countrycode(name,
                        "country.name.en",
-                       
-                       # Pide que convierta de acuerdo a un tipo de nombres
+                       # Pedimos que convierta de acuerdo a un tipo de nombres
                        # en este caso supuestamente es en español
-                       destination = "cldr.name.es")) |> 
-  
+                       destination = "cldr.name.es")
+  ) |> 
   # Agregamos codigo iso para unir después
   select(pais, 
          geometry, 
          name)
 
 
-# Convertimos nombres de países en para_mapa a ISO:
 para_mapa_final <- para_mapa |> 
-  mutate(
-    iso_a3 = countrycode(pais,
-                         "country.name",
-                         "iso3c"
-    )) |> 
   # Seleccionamos las columnas que queremos mantener
   select(iso_a3, 
          pais,
+         continente,
          n_nc,
          usuarios_totales,
          pct_nc,
@@ -224,89 +236,93 @@ para_mapa_final <- para_mapa |>
          dispositivo_top,
          pct_dispositivo)
 
+mapa_datos <- poligonos |> 
+  left_join(para_mapa_final,
+            by = "pais") |> 
+  filter(!is.na(n_nc)) 
+
 #--------------------------------------------------------#
 #    Fin limpieza de datos para interrogante 1 (mapa)    #  
 #--------------------------------------------------------#
-mapa_datos <- poligonos %>% 
-  left_join(para_mapa_final,
-            by = "pais") %>% 
-  
-  # Nos quedamos con los n_nc que son difernentes de NA
-  filter(!is.na(n_nc)) 
-mapa_datosf <- mapa_datos %>% 
-  mutate(
-    etiqueta = paste(
-      "<b>Pais: </b>", mapa_datos$pais, "<br>",
-      "<b>No compradores:</b>", mapa_datos$pct_nc,"% (n = ",mapa_datos$n_nc,") <br>",
-      "<b>Navegador principal:</b>",mapa_datos$Navegador_top, "(",mapa_datos$pct_Navegador,"%) <br>",
-      "<i>(entre sesiones) </i><br>",
-      "<b>Dispositivo principal:</b>", mapa_datos$dispositivo_top, "(",mapa_datos$pct_dispositivo,"%) <br>",
-      "<i>(entre sesiones)</i>"))
-# Lo pasamos a tipo mapa
-mapa_datosf <- sf::st_as_sf(mapa_datosf)
-mapa <- leaflet(mapa_datosf) %>%
-  # Ponemos el mapa que elegimos
-  addProviderTiles("CartoDB.PositronNoLabels") %>%
-  # Polígonos sin colores, solo bordes
-  addPolygons(
-    fillColor = "#7ADC87",
-    fillOpacity = 0.3,
-    weight = 1,
-    color = "#6EBD4C",
-    label = ~lapply(as.list(etiqueta), HTML),  
-    
-    highlightOptions = highlightOptions(
-      weight = 2,
-      color = "#CD5C5C",
-      fillOpacity = 0.7,
-      fillColor = "#FF6A6A"
-    )
+
+
+
+#--------------------------------------------------------#
+#    Limpieza de datos para interrogante 5 (compradores) #  
+#--------------------------------------------------------# 
+compradores <- cookies |>
+  group_by(ID) |>
+  filter(
+    any(!is.na(gasto)),           
+    n_distinct(pais) == 1
+  ) |>
+  summarise(
+    pais_label = first(pais),
+    n_compras = sum(!is.na(gasto)),
+    dispositivo = names(which.max(table(dispositivo))),
+    Navegador = names(which.max(table(Navegador))),
+    .groups = "drop"
   )
 
+#--------------------------------------------------------#
+# Fin limpieza de datos para interrogante 5 (compradores)#  
+#--------------------------------------------------------#
 
 
 
 #--------------------------------------------------------#
 #    Limpieza de datos para interrogante 2 (tendencia)   #  
 #--------------------------------------------------------# 
-datos_objetivo2 <- cookies %>%
+datos_objetivo2 <- cookies |>
   mutate(
     fecha = ymd(fecha),
-    dia = factor(str_to_title(weekdays(fecha)),
-                 levels = c("Lunes", "Martes", "Miércoles", "Jueves",
-                            "Viernes", "Sábado", "Domingo")),
-    mes = factor(str_to_title(format(fecha, "%B")),
-                 levels = c("Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio"))
-  ) %>%
-  group_by(mes, dia) %>%
+    dia = factor(
+      str_to_title(weekdays(fecha)),
+      levels = c("Lunes", "Martes", "Miércoles", "Jueves",
+                 "Viernes", "Sábado", "Domingo")),
+    mes = factor(
+      str_to_title(format(fecha, "%B")),
+      levels = c("Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio"))
+  ) |>
+  group_by(mes, dia) |>
   summarise(compras = sum(gasto > 0, na.rm = TRUE))
+
+#--------------------------------------------------------#
+# Fin limpieza de datos para interrogante 2 (tendencia)  #  
+#--------------------------------------------------------#
 
 
 
 #---------------------------------------------------------#
-#    Limpieza de datos para interrogante 6 (dispersion)   #  
+#    Limpieza de datos para interrogante 6 (dispersión)   #  
 #---------------------------------------------------------# 
-
-datos_objetivo6 <- cookies %>%
-  dplyr::filter(!is.na(gasto), gasto > 0) %>% 
+datos_objetivo6 <- cookies |>
+  dplyr::filter(!is.na(gasto), gasto > 0) |> 
   dplyr::select(paginas, gasto)
 
+#--------------------------------------------------------#
+# Fin limpieza de datos para interrogante 6 (dispersión) #  
+#--------------------------------------------------------#
+
+
+
 #-----------------------------------------------------------#
-#    Limpieza de datos para interrogante 7 (distribucion)   #  
+#    Limpieza de datos para interrogante 7 (distribución)   #  
 #-----------------------------------------------------------# 
-compras <- cookies %>%
+compras <- cookies |>
   dplyr::filter(!is.na(gasto), gasto > 0)
+
 # Estadisticas para el cartel
-dispositivo_stats <- compras %>%
-  dplyr::group_by(dispositivo) %>%
+dispositivo_stats <- compras |>
+  dplyr::group_by(dispositivo) |>
   dplyr::summarise(
     Media   = mean(gasto),
     Mediana = median(gasto),
     Min     = min(gasto),
     Max     = max(gasto),
     .groups = "drop"
-  ) %>%
-  #Creo una columna de texto para HTML
+  ) |>
+  # Creamos una columna de texto para HTML
   dplyr::mutate(
     columna_text = paste0(
       "<b>Dispositivo: </b>", dispositivo, "<br>",
@@ -315,30 +331,33 @@ dispositivo_stats <- compras %>%
       "<b>Mínimo: </b>",  scales::dollar(round(Min,     0)), "<br>",
       "<b>Máximo: </b>",  scales::dollar(round(Max,     0))
     )
-  ) %>%
-  # Selecciona solo la columna de texto y la variable de agrupación
+  ) |>
+  # Seleccionamos sólo la columna de texto y la variable de agrupación
   dplyr::select(dispositivo, columna_text)
-compras_con_col_texto <- compras %>%
+
+compras_con_col_texto <- compras |>
   dplyr::left_join(dispositivo_stats, by = "dispositivo")
+
+#----------------------------------------------------------#
+# Fin limpieza de datos para interrogante 7 (distribución) #  
+#----------------------------------------------------------#
 
 
 
 #-------------------------------------------------------#
 #    Limpieza de datos para interrogante 3 (burbujas)   #  
 #-------------------------------------------------------# 
-
 # Armamos un dataset que tenga los tiempos en minutos según navegador y dispositivo
-datos_objetivo3 <- cookies %>% 
+datos_objetivo3 <- cookies |> 
   dplyr::mutate(
     # Pasamos los que tienen tiempo na a 0 y todo a minutos
     tiempo = ifelse (is.na(tiempo), 0, tiempo) / 60
-  ) %>% 
+  ) |> 
   # Agrupamos por Navegador y dispositivo:
-  dplyr::group_by(Navegador, dispositivo) %>% 
+  dplyr::group_by(Navegador, dispositivo) |> 
   dplyr::summarise(
     tiempo_medio = mean(tiempo),
     clicks_medio = mean(clicks),
-    
     # Para el tamaño de los círculos
     frecuencia = n(), # SESIONES
     .groups = "drop"
@@ -357,22 +376,28 @@ colores_Navegador <- c(
   "Otros" = "purple2"
 )
 
+#--------------------------------------------------------#
+# Fin limpieza de datos para interrogante 3 (burbujas)   #  
+#--------------------------------------------------------#
+
+
+
 #---------------------------------------------------------#
 #    Limpieza de datos para interrogante 4 (histograma)   #  
 #---------------------------------------------------------# 
-visitas_compra <- cookies %>%
-  dplyr::arrange(ID, ymd(fecha)) %>% 
-  dplyr::group_by(ID) %>% 
+visitas_compra <- cookies |>
+  dplyr::arrange(ID, ymd(fecha)) |> 
+  dplyr::group_by(ID) |> 
   dplyr::mutate(compra =  gasto > 0, 
-         visita_compra = ifelse(any(compra),          
-                                which(compra)[1], NA)) %>% 
-  dplyr::filter(!is.na(visita_compra)) %>%
-  dplyr::add_count(ID, dispositivo, name = "veces_dispositivo") %>%
+                visita_compra = ifelse(any(compra),          
+                                       which(compra)[1], NA)) |> 
+  dplyr::filter(!is.na(visita_compra)) |>
+  dplyr::add_count(ID, dispositivo, name = "veces_dispositivo") |>
   dplyr::summarise(                  
     visitas_hasta_compra = dplyr::first(visita_compra),
     
     dispositivo_principal = dispositivo[which.max(veces_dispositivo)]
-  ) %>% 
+  ) |> 
   dplyr::mutate(
     categoria_visitas = cut(
       visitas_hasta_compra,
@@ -382,28 +407,28 @@ visitas_compra <- cookies %>%
   )
 
 # Totales por categoría de visita (cuantos clientes hay en cada categoria)
-totales_categoria <- visitas_compra %>%
-  dplyr::group_by(categoria_visitas) %>%
+totales_categoria <- visitas_compra |>
+  dplyr::group_by(categoria_visitas) |>
   dplyr::summarise(total = n(),
-            .groups = 'drop') 
+                   .groups = 'drop') 
 
 # Porcentajes por dispositivo dentro de cada categoría
-porcentajes_dispositivo <- visitas_compra %>%          
+porcentajes_dispositivo <- visitas_compra |>          
   # Agrupamos por categoria de visitas y dispositivo
-  dplyr::group_by(categoria_visitas, dispositivo_principal) %>%
+  dplyr::group_by(categoria_visitas, dispositivo_principal) |>
   # Contamos cuantos clientes hay en cada combinacion
   dplyr::summarise(n = n(), 
-            .groups = 'drop') %>%        
+                   .groups = 'drop') |>        
   # Agrupamos solo por categoria de visita
-  dplyr::group_by(categoria_visitas) %>%         
-  
-  dplyr::mutate(porcentaje = round(n / sum(n) * 100, 1)) %>%  
+  dplyr::group_by(categoria_visitas) |>         
+  dplyr::mutate(porcentaje = round(n / sum(n) * 100, 1)) |>  
   # Porcentaje de cada dispositivo dentro de su categoria
   dplyr::select(categoria_visitas,
-         dispositivo_principal, 
-         porcentaje) 
+                dispositivo_principal, 
+                porcentaje)
+
 # Formato ancho para tener una columna por dispositivo
-porcentajes_ancho <- porcentajes_dispositivo %>%
+porcentajes_ancho <- porcentajes_dispositivo |>
   tidyr::pivot_wider(
     names_from = dispositivo_principal,
     values_from = porcentaje,
@@ -411,12 +436,12 @@ porcentajes_ancho <- porcentajes_dispositivo %>%
   )
 
 # Unimos los totales con los porcentajes
-datos_grafico <- totales_categoria %>%
+datos_grafico <- totales_categoria |>
   dplyr::left_join(porcentajes_ancho,
-            by = "categoria_visitas")
+                   by = "categoria_visitas")
 
 # Hacemos el tooltip para que aparezca la etiqueta que cuando apoyas el mouse
-datos_grafico <- datos_grafico %>%
+datos_grafico <- datos_grafico |>
   dplyr::mutate(
     tooltip = paste0(
       "<b>Visitas hasta compra: ", categoria_visitas, "</b><br>",
@@ -428,44 +453,53 @@ datos_grafico <- datos_grafico %>%
     )
   )
 
-
-
-
-
-
+#--------------------------------------------------------#
+# Fin limpieza de datos para interrogante 4 (histograma) #  
+#--------------------------------------------------------#
 
 
 
 
 # PARA QUE APAREZCAN DISTINTOS SIDEBAR DE ACUERDO
-# CON DISTINTAS PÁGINAS HAY QUE GUARDAR LOS SIDEBAR 
+# CON DISTINTAS PÁGINAS GUARDAMOS LOS SIDEBAR 
 # AFUERA DE LAS FUNCIONES COMO UN OBJETO
 
+# Guardamos los continentes para las opciones del sidebar:
+continentes1 <- unique(cookies$continente) 
+continentes <- continentes1[continentes1 != "Sin especificar"]
 
+# SIDEBAR mapa:
 sidebar_g1_mapa <- bslib::sidebar(
   title = "Mapa",
-    
   # selectInput para poder escribir y elegir 
   # la palabra (en este caso el continente)
-    shinyWidgets::pickerInput(
-      inputId = "continente_mapa",
-      label = "Continente/s",
-      choices = c("América del Norte", "América del Sur", "América Central"),
-      options = list(
-        # Para que se pueda buscar en el momento
-        "live-search" = T,
-        # Para seleccionar y deseleccionar todo:
-        "actions-box" = T
-      )
+  shinyWidgets::pickerInput(
+    inputId = "continente_mapa",
+    label = "Continente/s",
+    choices = sort(continentes),
+    # Para que tenga todos seleccionados automáticamente ponemos
+    # continentes (que es el vector que contiene los nombres)
+    selected = continentes,
+    multiple = T,
+    options = list(
+      # Para que se pueda buscar en el momento
+      "live-search" = T,
+      # Para seleccionar y deseleccionar todo:
+      "actions-box" = T
     )
+  )
 )
 
+
+# SIDEBAR tabla:
 sidebar_g1_tabla <- bslib::sidebar(
   title = "Tabla",
   shinyWidgets::pickerInput(
     inputId = "paises_tabla",
     label = "País/es",
-    choices = c("EEUU", "Argentinaaaa", "Uruguay", "Chile"),
+    choices = sort(unique(compradores$pais_label)),
+    selected = "Argentina",
+    multiple = T,
     options = list(
       "live-search" = T,
       "actions-box" = T
@@ -473,6 +507,8 @@ sidebar_g1_tabla <- bslib::sidebar(
   )
 )
 
+
+# SIDEBAR gráfico de tendencias:
 sidebar_g2_tendencia <- bslib::sidebar(
   title = "Tendencia por Mes", 
   shinyWidgets::pickerInput(
@@ -482,16 +518,16 @@ sidebar_g2_tendencia <- bslib::sidebar(
     multiple = TRUE,
     selected = unique(datos_objetivo2$mes)[1],
   )
- )
-  
+)
+
 
 ###############################################################
 
 
 # ARMAMOS LA INTERFAZ
 
-  MiInterfaz <- bslib::page_navbar(
-    title = tags$span("Google Analytics", style = "color: #40E0D0; font-weight: bold;"),
+MiInterfaz <- bslib::page_navbar(
+  title = tags$span("Google Analytics", style = "color: #40E0D0; font-weight: bold;"),
   bslib::nav_panel(
     title = "Introducción",
     bslib::layout_column_wrap(
@@ -503,7 +539,7 @@ sidebar_g2_tendencia <- bslib::sidebar(
         bslib::card_header(tags$b("Seguimiento del comportamiento de los usuarios en un sitio web")),
         bslib::card_body(
           style = "height: 250px; overflow: auto; padding-right: 6px;",
-      
+          
           tags$p("La tienda oficial del merch de Google está interesada en obtener información que pueda ayudarle a mejorar su estrategia
            comercial."),
           tags$p("Para ello se cuenta con la base de datos proporcionada
@@ -537,39 +573,46 @@ sidebar_g2_tendencia <- bslib::sidebar(
             
             tags$p(shiny::icon("flag"), tags$b("Pais:"), "País de residencia del visitante del sitio web.")
           )
-          # [FIN DEL NUEVO CONTENIDO CON ICONOS]
+          # [FIN DEL CONTENIDO CON ICONOS]
         )
       )
     )),
+  
   # Primera pestaña
   bslib::nav_panel(
-                   title ="Características",
-                   bslib::layout_sidebar(
-                   sidebar = sidebar_g1_mapa,
-                     bslib::card(
-                       full_screen = T,
-                       bslib::card_header("Mapa no compradores"),
-                          bslib::card_body(
-                            class = "p-0",
-                            leafletOutput("mapa_output")
-                            )
-                          )
-                   ),
-                   
-                   # Segunda sección:
-                     bslib::layout_sidebar(
-                       sidebar = sidebar_g1_tabla,
-                       bslib::card(
-                         full_screen = T,
-                         bslib::card_header("Tabla compradores"),
-                         bslib::card_body(
-                           dataTableOutput("tabla_output")
-                          )
-                         )
-                       )
-                   ),
+    title ="Características",
+    fill = F,
+    bslib::layout_sidebar(
+      sidebar = sidebar_g1_mapa,
+      fill = F,
+      bslib::card(
+        bslib::card_header("Mapa no compradores"),
+        bslib::card_body(
+          class = "p-0",
+          leafletOutput("mapa_output", 
+                        # Para que se vea bien, sino se veía muy chico el mapa
+                        height = "75vh")
+        )
+      )
+    ),
+    
+    # Separador visual
+    hr(),
+    
+    # Segunda sección:
+    bslib::layout_sidebar(
+      sidebar = sidebar_g1_tabla,
+      fill = F,
+      bslib::card(
+        bslib::card_header("Tabla compradores"),
+        bslib::card_body(
+          dataTableOutput("tabla_output")
+        )
+      )
+    )
+  ),
   
- # Segunda pestaña
+  # Segunda pestaña
   bslib::nav_panel(
     title = "Evolución de compras",
     bslib::layout_sidebar(
@@ -581,7 +624,7 @@ sidebar_g2_tendencia <- bslib::sidebar(
       )
     )
   ),
-
+  
   # Tercera pestaña
   bslib::nav_panel(
     title = "Análisis del gasto",
@@ -596,11 +639,11 @@ sidebar_g2_tendencia <- bslib::sidebar(
         bslib::card_header("Distribución de gasto por compra según dispositivo"),
         plotly::plotlyOutput(outputId = "distribucion_compra")
       )
-  )
-),
+    )
+  ),
   
-# Cuarta pestaña
-bslib::nav_panel(
+  # Cuarta pestaña
+  bslib::nav_panel(
     title = "Comportamiento del usuario",
     bslib::layout_columns(
       bslib::card(
@@ -616,22 +659,191 @@ bslib::nav_panel(
     )
   )
 ) 
-  
+
 
 
 
 
 # ARMAMOS EL SERVIDOR
-MiServidor <- function(input, output) {
+MiServidor <- function(input, output, session) {
   # Página 1
   
+  # Filtramos datos reactividad mapa (fuera del renderLeaflet)
+  mapa_filtrado <- reactive({
+    mapa_datos |> 
+      filter(continente %in% input$continente_mapa) |> 
+      st_as_sf()
+  })
+  
+  
+  # Mapa
+  output$mapa_output <- renderLeaflet({
+    
+    mapa_filtrado2 <- mapa_filtrado()
+    
+    etiqueta <- paste0(
+      "<b>Pais: </b>", mapa_filtrado2$pais, "<br>",
+      "<b>No compradores:</b>", mapa_filtrado2$pct_nc,"% (n = ",mapa_filtrado2$n_nc,") <br>",
+      "<b>Navegador principal:</b>",mapa_filtrado2$Navegador_top, "(",mapa_filtrado2$pct_Navegador,"%) <br>",
+      "<i>(entre sesiones) </i><br>",
+      "<b>Dispositivo principal:</b>", mapa_filtrado2$dispositivo_top, "(",mapa_filtrado2$pct_dispositivo,"%) <br>",
+      "<i>(entre sesiones)</i>")
+    
+    leaflet(mapa_filtrado2) |>
+      # Ponemos el mapa que elegimos
+      addProviderTiles("CartoDB.PositronNoLabels") |>
+      # Polígonos sin colores, solo bordes
+      addPolygons(
+        fillColor = "#40E0D0",
+        fillOpacity = 0.3,
+        weight = 1,
+        color = "#40E0F3",
+        label = lapply(etiqueta, htmltools::HTML),
+        
+        highlightOptions = highlightOptions(
+          weight = 2,
+          color = "#40F0C0",
+          fillOpacity = 0.7,
+          fillColor = "#40F0B0"
+        )
+      )
+  })
+  
+  
+  
+  # Tabla
+  # Reactividad de la tabla
+  paises_compradores <- reactive({
+    compradores |> 
+      filter(pais_label %in% input$paises_tabla)
+  })  
+  
+  
+  # Para dispositivo
+  dispositivo_tabla <- reactive({
+    cookies |> 
+      filter(pais %in% input$paises_tabla) |> 
+      group_by(ID) |> 
+      filter(
+        n_distinct(pais) == 1,
+        any(!is.na(gasto))
+      ) |> 
+      ungroup() |> 
+      group_by(pais, dispositivo) |> 
+      summarise(cantidad = n(),
+                .groups = "drop") |> 
+      group_by(pais) |> 
+      mutate(
+        pct = round(cantidad/ sum(cantidad) * 100, 2)
+      ) |> 
+      arrange(pais, desc(cantidad)) |> 
+      
+      slice(1) |> 
+      ungroup() |> 
+      select(pais_label = pais,
+             Dispositivo_top = dispositivo,
+             pct_dispositivo_top = pct)
+  })
+  
+  
+  # Para navegador
+  navegador_tabla <- reactive({
+    cookies |> 
+      filter(pais %in% input$paises_tabla) |> 
+      group_by(ID) |> 
+      filter(n_distinct(pais) == 1,
+             any(!is.na(gasto))) |> 
+      
+      ungroup() |> 
+      
+      group_by(pais, Navegador) |> 
+      summarise(cantidad = n(),
+                .groups = "drop") |> 
+      group_by(pais) |> 
+      mutate(
+        pct = round(cantidad/ sum(cantidad) * 100, 2)
+      ) |> 
+      arrange(pais, desc(cantidad)) |> 
+      slice(1) |> 
+      ungroup() |> 
+      select(pais_label = pais,
+             Navegador_top = Navegador,
+             pct_navegador_top = pct)
+  })
+  
+  # Output tabla
+  output$tabla_output <- renderDataTable({
+    
+    compradores_seleccionados <- paises_compradores()
+    
+    disp_en_compradores <- dispositivo_tabla()
+    
+    brow_en_compradores <- navegador_tabla()
+    
+    
+    tabla_pais <- cookies |> 
+      filter(pais %in% input$paises_tabla) |> 
+      group_by(ID) |> 
+      filter(n_distinct(pais) == 1) |> 
+      summarise(
+        pais_label = first(pais), 
+        compro = any(!is.na(gasto)),
+        cant_compras = sum(!is.na(gasto)),
+        .groups = "drop") |> 
+      group_by(pais_label) |> 
+      summarise(
+        n_usuarios = n(),
+        usuarios_compradores = sum(compro == T),
+        conv = usuarios_compradores / n_usuarios,   
+      )
+    
+    
+    
+    tabla <- tabla_pais |> 
+      # Unimos Navegador y dispositivo
+      left_join(disp_en_compradores, by = c("pais_label")) |> 
+      left_join(brow_en_compradores, by = c("pais_label")) |> 
+      mutate(
+        "Porcentaje Compradores" = round(conv * 100, 2), 
+        "Porcentaje Dispositivo Principal" = round(pct_dispositivo_top, 2),
+        "Porcentaje Navegador Principal" = round(pct_navegador_top,2 )
+      ) |> 
+      select( 
+        País = pais_label,
+        "Porcentaje Compradores",
+        "Navegador Principal"= Navegador_top,
+        "Porcentaje Navegador Principal",
+        "Dispositivo Principal" = Dispositivo_top,
+        "Porcentaje Dispositivo Principal"
+      )
+    
+    # Tabla en sí:
+    datatable(
+      tabla,
+      options = list(
+        pageLength = 10,
+        dom = 't',
+        ordering = TRUE
+      ),
+      rownames = FALSE
+    ) |> 
+      formatStyle(
+        columns = 1:6,
+        backgroundColor = styleEqual(0, "#00C1D4"),  
+        color = "black"
+      )
+  })  
   
   
   # Página 2
+  # Reactividad del gráfico de tendencias
   datos_filtrados <- shiny::reactive({
-    dplyr::filter(datos_objetivo2, 
-                  mes %in% input$mes_tendencia)
+    dplyr::filter(
+      datos_objetivo2, 
+      mes %in% input$mes_tendencia)
   })
+  
+  # Output gráfico:
   output$tendencias_output <- shiny::renderPlot({
     datos <- datos_filtrados()
     
@@ -660,10 +872,11 @@ MiServidor <- function(input, output) {
       )
   })
   
-
+  
   # Página 3
-#Gráfico de dispersión
+  # Gráfico de dispersión
   output$dispersion_gasto <- plotly::renderPlotly({
+    
     graf_obj6 <- ggplot2::ggplot(datos_objetivo6,
                                  ggplot2::aes(
                                    x = gasto,
@@ -688,93 +901,92 @@ MiServidor <- function(input, output) {
     plotly::ggplotly(graf_obj6, tooltip = "text")
   })
   
-
-
-
-#Gráfico de distribuciones
-output$distribucion_compra <- plotly::renderPlotly({
-  graf_dist <- ggplot2::ggplot(
-    compras_con_col_texto,
-    ggplot2::aes(x = gasto, fill = dispositivo, text = columna_text)
-  ) +
-    ggplot2::geom_density(alpha = 0.4, color = "white") +
-    ggplot2::scale_x_log10(
-      breaks = c(10, 100, 1000, 10000),
-      labels = scales::label_number()
-    ) +
-    ggplot2::scale_fill_brewer(palette = "Set2", name = "Dispositivo") +
-    ggplot2::labs(
-      title = "",
-      subtitle = "En escala logarítmica",
-      x = "Gasto por compra en USD (escala logarítmica)",
-      y = "Densidad"
-    ) +
-    ggplot2::theme_bw() +
-    ggplot2::theme(legend.position = "top")
   
-  plotly::ggplotly(graf_dist, tooltip = "text")
-})
-
-# Página 4
-#Burbujas
-output$graf_burbujas <- plotly::renderPlotly({
-  grafico_obj3 <- ggplot2::ggplot(datos_objetivo3) +
-    ggplot2::aes(
-      x = tiempo_medio,
-      y = clicks_medio,
-      size = frecuencia,
-      colour = Navegador,
-      text = paste0(
-        "<b>Navegador: </b>", Navegador, "<br>",
-        "<b>Frecuencia: </b>", frecuencia, " <i>(sesiones)</i><br>",
-        "<b>Tiempo medio: </b>", round(tiempo_medio, 2), " min<br>",
-        "<b>Clicks medio: </b>", round(clicks_medio, 0)
+  
+  
+  #Gráfico de distribuciones
+  output$distribucion_compra <- plotly::renderPlotly({
+    graf_dist <- ggplot2::ggplot(
+      compras_con_col_texto,
+      ggplot2::aes(x = gasto, fill = dispositivo, text = columna_text)
+    ) +
+      ggplot2::geom_density(alpha = 0.4, color = "white") +
+      ggplot2::scale_x_log10(
+        breaks = c(10, 100, 1000, 10000),
+        labels = scales::label_number()
+      ) +
+      ggplot2::scale_fill_brewer(palette = "Set2", name = "Dispositivo") +
+      ggplot2::labs(
+        title = "",
+        subtitle = "En escala logarítmica",
+        x = "Gasto por compra en USD (escala logarítmica)",
+        y = "Densidad"
+      ) +
+      ggplot2::theme_bw() +
+      ggplot2::theme(legend.position = "top")
+    
+    plotly::ggplotly(graf_dist, tooltip = "text")
+  })
+  
+  # Página 4
+  #Burbujas
+  output$graf_burbujas <- plotly::renderPlotly({
+    grafico_obj3 <- ggplot2::ggplot(datos_objetivo3) +
+      ggplot2::aes(
+        x = tiempo_medio,
+        y = clicks_medio,
+        size = frecuencia,
+        colour = Navegador,
+        text = paste0(
+          "<b>Navegador: </b>", Navegador, "<br>",
+          "<b>Frecuencia: </b>", frecuencia, " <i>(sesiones)</i><br>",
+          "<b>Tiempo medio: </b>", round(tiempo_medio, 2), " min<br>",
+          "<b>Clicks medio: </b>", round(clicks_medio, 0)
+        )
+      ) + 
+      ggplot2::geom_point(alpha = 0.4) +
+      ggplot2::scale_colour_manual(values = colores_Navegador, name = "Navegador") +
+      ggplot2::scale_size(range = c(2, 18), name = "Conteo de sesiones") +
+      ggplot2::scale_x_continuous(limits = c(0, max(datos_objetivo3$tiempo_medio) * 1.5)) +
+      ggplot2::scale_y_continuous(limits = c(0, max(datos_objetivo3$clicks_medio) * 1.5)) +
+      ggplot2::facet_wrap(~dispositivo, ncol = 3) +
+      ggplot2::labs(
+        x = "Tiempo (minutos)",
+        y = "Clicks"
+      ) +
+      ggplot2::theme_bw() +
+      ggplot2::theme(
+        strip.background = ggplot2::element_blank(),
+        strip.text = ggplot2::element_text(face = "bold")
       )
-    ) + 
-    ggplot2::geom_point(alpha = 0.4) +
-    ggplot2::scale_colour_manual(values = colores_Navegador, name = "Navegador") +
-    ggplot2::scale_size(range = c(2, 18), name = "Conteo de sesiones") +
-    ggplot2::scale_x_continuous(limits = c(0, max(datos_objetivo3$tiempo_medio) * 1.5)) +
-    ggplot2::scale_y_continuous(limits = c(0, max(datos_objetivo3$clicks_medio) * 1.5)) +
-    ggplot2::facet_wrap(~dispositivo, ncol = 3) +
-    ggplot2::labs(
-      x = "Tiempo (minutos)",
-      y = "Clicks"
-    ) +
-    ggplot2::theme_bw() +
-    ggplot2::theme(
-      strip.background = ggplot2::element_blank(),
-      strip.text = ggplot2::element_text(face = "bold")
-    )
+    
+    plotly::ggplotly(grafico_obj3, tooltip = "text") |>
+      plotly::layout(legend = list(itemsizing = "constant"))
+  })
   
-  plotly::ggplotly(grafico_obj3, tooltip = "text") %>%
-    plotly::layout(legend = list(itemsizing = "constant"))
-})
-
-
-#Histograma
-output$hist_ventas <- plotly::renderPlotly({
-  p <- ggplot2::ggplot(
-    datos_grafico,
-    ggplot2::aes(x = categoria_visitas, y = total, text = tooltip)
-  ) +
-    ggplot2::geom_col(fill = "#40E0D0") +
-    ggplot2::labs(
-      x = "Visitas hasta la compra",
-      y = "Cantidad de clientes"
-    ) +
-    ggplot2::theme_minimal() +
-    ggplot2::theme(
-      strip.text = ggplot2::element_text(face = "bold")
-    )
   
-  plotly::ggplotly(p, tooltip = "text")
-})
-
-
-
+  #Histograma
+  output$hist_ventas <- plotly::renderPlotly({
+    p <- ggplot2::ggplot(
+      datos_grafico,
+      ggplot2::aes(x = categoria_visitas, y = total, text = tooltip)
+    ) +
+      ggplot2::geom_col(fill = "#40E0D0") +
+      ggplot2::labs(
+        x = "Visitas hasta la compra",
+        y = "Cantidad de clientes"
+      ) +
+      ggplot2::theme_minimal() +
+      ggplot2::theme(
+        strip.text = ggplot2::element_text(face = "bold")
+      )
+    
+    plotly::ggplotly(p, tooltip = "text")
+  })
+  
+  
+  
 }
 
 
 shiny::shinyApp(ui = MiInterfaz, server = MiServidor)
-
